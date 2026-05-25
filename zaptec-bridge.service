@@ -1,15 +1,32 @@
 [Unit]
 Description=Zaptec Home Assistant Bridge
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/kristian/workspace/ZaptecHomeAssistant
-Environment="ZAPTEC_PASSWORD=your-password-here"
-ExecStart=/usr/bin/python3 /home/kristian/workspace/ZaptecHomeAssistant/zaptec_bridge.py
+User=zaptec
+Group=zaptec
+WorkingDirectory=/opt/zaptec-bridge
+# Zaptec password comes from this 0600 file so it is not in the unit or `ps`.
+# MQTT credentials live in /opt/zaptec-bridge/config.yaml (also 0600).
+EnvironmentFile=/etc/zaptec-bridge.env
+ExecStart=/opt/zaptec-bridge/.venv/bin/python /opt/zaptec-bridge/zaptec_bridge.py
 Restart=always
 RestartSec=10
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+# The app writes its OAuth token cache and reads config.yaml here.
+ReadWritePaths=/opt/zaptec-bridge
 
 [Install]
 WantedBy=multi-user.target

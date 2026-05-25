@@ -99,21 +99,23 @@ zaptec:
 
 ### Systemd (Linux)
 
-1. Copy the service file:
+The shipped unit runs as a dedicated `zaptec` user from `/opt/zaptec-bridge`,
+with the Zaptec password in a `0600` EnvironmentFile (not in the unit / `ps`).
+MQTT credentials stay in `config.yaml` (keep it `0600`).
+
+1. Install the code + venv into `/opt/zaptec-bridge` and create the `zaptec` user.
+2. Put `config.yaml` (MQTT creds) in `/opt/zaptec-bridge/` (chmod 600, owned by `zaptec`).
+3. Create the env file with your Zaptec password:
+```bash
+sudo cp zaptec-bridge.env.example /etc/zaptec-bridge.env
+sudo nano /etc/zaptec-bridge.env   # set ZAPTEC_PASSWORD
+sudo chmod 600 /etc/zaptec-bridge.env
+```
+4. Install, enable and start:
 ```bash
 sudo cp zaptec-bridge.service /etc/systemd/system/
-```
-
-2. Edit the service file to set your password:
-```bash
-sudo nano /etc/systemd/system/zaptec-bridge.service
-# Change the Environment line to include your password
-```
-
-3. Enable and start:
-```bash
-sudo systemctl enable zaptec-bridge
-sudo systemctl start zaptec-bridge
+sudo systemctl daemon-reload
+sudo systemctl enable --now zaptec-bridge
 sudo systemctl status zaptec-bridge
 ```
 
