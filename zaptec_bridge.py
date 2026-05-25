@@ -5,8 +5,10 @@ Main application that connects Zaptec chargers to Home Assistant via MQTT.
 """
 
 import logging
+import math
 import signal
 import sys
+import threading
 import time
 import yaml
 import os
@@ -31,7 +33,8 @@ class ZaptecBridge:
         """
         self.config = self._load_config(config_path)
         self.running = False
-        
+        self._wake = threading.Event()  # interruptible poll sleep / prompt shutdown
+
         # Setup logging
         log_level = self.config["bridge"].get("log_level", "INFO")
         logging.basicConfig(
@@ -62,18 +65,23 @@ class ZaptecBridge:
         
         # Initialize MQTT components
         
+        state_prefix = self.config["bridge"].get("state_topic_prefix", "zaptec")
+        availability_topic = f"{state_prefix}/bridge/availability"
+
         self.mqtt_client = MQTTClient(
             host=self.config["mqtt"]["host"],
             port=self.config["mqtt"]["port"],
             username=self.config["mqtt"]["username"],
             password=self.config["mqtt"]["password"],
-            client_id=self.config["mqtt"].get("client_id", "zaptec-bridge")
+            client_id=self.config["mqtt"].get("client_id", "zaptec-bridge"),
+            availability_topic=availability_topic
         )
-        
+
         self.ha_discovery = HomeAssistantDiscovery(
             mqtt_client=self.mqtt_client,
             discovery_prefix=self.config["bridge"].get("discovery_prefix", "homeassistant"),
-            state_topic_prefix=self.config["bridge"].get("state_topic_prefix", "zaptec")
+            state_topic_prefix=state_prefix,
+            availability_topic=availability_topic
         )
         
         self.chargers: Dict[str, Dict] = {}
@@ -137,9 +145,10 @@ class ZaptecBridge:
         return None
     
     def _signal_handler(self, signum, frame):
-        """Handle shutdown signals."""
-        self.logger.info("Received shutdown signal, stopping...")
-        self.stop()
+        """Handle shutdown signals. Keep it minimal/async-signal-safe: just
+        flag the loop and wake it; cleanup happens on the main thread."""
+        self.running = False
+        self._wake.set()
     
     def _handle_command(self, topic: str, payload: str):
         """
@@ -183,12 +192,18 @@ class ZaptecBridge:
                 self.zaptec_api.stop_charging(charger_id)
         
         elif command_type == "set_current":
-            # Set charge current limit
+            # Set charge current limit. Validate/clamp before sending to a
+            # physical charger -- MQTT clients can publish anything (incl.
+            # inf/nan, negative, or huge values), bypassing the HA UI's 6-32A.
             try:
                 current = float(payload)
-                self.zaptec_api.set_charge_current(charger_id, current)
             except ValueError:
                 self.logger.error(f"Invalid current value: {payload}")
+                return
+            if not math.isfinite(current) or not (6 <= current <= 32):
+                self.logger.error(f"Charge current out of range (6-32A): {payload}")
+                return
+            self.zaptec_api.set_charge_current(charger_id, round(current))
     
     def _discover_chargers(self):
         """Discover all accessible chargers."""
@@ -391,13 +406,13 @@ class ZaptecBridge:
         """
         charger = self.chargers.get(charger_id)
         if not charger:
-            return
-        
+            return False
+
         # Get current state from API
         state_data = self.zaptec_api.get_charger_state(charger_id)
         if not state_data:
             self.logger.warning(f"Failed to get state for charger {charger_id}")
-            return
+            return False
         
         # Log first few items to understand structure
         if isinstance(state_data, list) and len(state_data) > 0:
@@ -421,14 +436,23 @@ class ZaptecBridge:
         self.logger.info(f"  - Current: {parsed_state.get('total_charge_current')} A")
         self.logger.info(f"  - Charging: {parsed_state.get('is_charging')}")
         self.logger.info(f"  - Connected: {parsed_state.get('is_connected')}")
-    
+
+        return bool(parsed_state.get("is_charging"))
+
     def _poll_chargers(self):
-        """Poll all chargers for updates."""
+        """Poll all chargers; pick the poll interval based on charging state."""
+        any_charging = False
         for charger_id in self.chargers.keys():
             try:
-                self._update_charger_state(charger_id)
+                if self._update_charger_state(charger_id):
+                    any_charging = True
             except Exception as e:
                 self.logger.error(f"Error updating charger {charger_id}: {e}")
+
+        # Fast polling while any charger is active, slow when idle.
+        self.current_poll_interval = (
+            self.poll_interval_charging if any_charging else self.poll_interval_idle
+        )
     
     def start(self):
         """Start the bridge service."""
@@ -459,22 +483,25 @@ class ZaptecBridge:
         self.logger.info(f"Bridge started with dynamic polling:")
         self.logger.info(f"  - Charging mode: {self.poll_interval_charging}s interval")
         self.logger.info(f"  - Idle mode: {self.poll_interval_idle}s interval")
-        self.logger.info(f"  - Boost duration: {self.boost_duration}s")
-        
+
         try:
             while self.running:
                 self._poll_chargers()
-                time.sleep(self.current_poll_interval)
+                # Interruptible wait so SIGTERM is acted on immediately.
+                self._wake.wait(self.current_poll_interval)
         except Exception as e:
             self.logger.error(f"Error in main loop: {e}", exc_info=True)
-        
+        finally:
+            self.logger.info("Polling loop ended; disconnecting...")
+            self.mqtt_client.disconnect()
+
         return True
-    
+
     def stop(self):
-        """Stop the bridge service."""
+        """Stop the bridge service (flag the loop; cleanup runs on the main thread)."""
         self.logger.info("Stopping Zaptec Home Assistant Bridge...")
         self.running = False
-        self.mqtt_client.disconnect()
+        self._wake.set()
 
 
 def main():

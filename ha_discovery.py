@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class HomeAssistantDiscovery:
     """Handles Home Assistant MQTT discovery."""
     
-    def __init__(self, mqtt_client, discovery_prefix: str = "homeassistant", 
-                 state_topic_prefix: str = "zaptec"):
+    def __init__(self, mqtt_client, discovery_prefix: str = "homeassistant",
+                 state_topic_prefix: str = "zaptec", availability_topic: Optional[str] = None):
         """
         Initialize HA discovery helper.
         
@@ -26,7 +26,16 @@ class HomeAssistantDiscovery:
         self.mqtt = mqtt_client
         self.discovery_prefix = discovery_prefix
         self.state_topic_prefix = state_topic_prefix
-    
+        self.availability_topic = availability_topic
+
+    def _apply_availability(self, config: Dict):
+        """Add availability (online/offline) to an entity config so HA marks it
+        unavailable when the bridge is down, instead of showing stale state."""
+        if self.availability_topic:
+            config["availability_topic"] = self.availability_topic
+            config["payload_available"] = "online"
+            config["payload_not_available"] = "offline"
+
     @staticmethod
     def _sanitize_topic_part(text: str) -> str:
         """
@@ -309,8 +318,9 @@ class HomeAssistantDiscovery:
             config["state_class"] = state_class
         if icon:
             config["icon"] = icon
-        
-        self.mqtt.publish_discovery("sensor", node_id, object_id, config, 
+        self._apply_availability(config)
+
+        self.mqtt.publish_discovery("sensor", node_id, object_id, config,
                                     self.discovery_prefix)
     
     def _create_binary_sensor(self, node_id: str, object_id: str, name: str,
@@ -332,7 +342,8 @@ class HomeAssistantDiscovery:
             config["device_class"] = device_class
         if icon:
             config["icon"] = icon
-        
+        self._apply_availability(config)
+
         self.mqtt.publish_discovery("binary_sensor", node_id, object_id, config,
                                     self.discovery_prefix)
     
@@ -355,7 +366,8 @@ class HomeAssistantDiscovery:
         
         if icon:
             config["icon"] = icon
-        
+        self._apply_availability(config)
+
         self.mqtt.publish_discovery("switch", node_id, object_id, config,
                                     self.discovery_prefix)
     
@@ -381,7 +393,8 @@ class HomeAssistantDiscovery:
             config["unit_of_measurement"] = unit_of_measurement
         if icon:
             config["icon"] = icon
-        
+        self._apply_availability(config)
+
         self.mqtt.publish_discovery("number", node_id, object_id, config,
                                     self.discovery_prefix)
     

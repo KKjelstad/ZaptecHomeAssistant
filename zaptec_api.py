@@ -80,12 +80,14 @@ class ZaptecAPI:
                 'expiry': self.token_expiry.isoformat()
             }
             
-            with open(self.token_cache_file, 'w') as f:
+            # Create the file 0600 from the start so the tokens are never
+            # briefly world-readable (umask) between open() and chmod().
+            fd = os.open(str(self.token_cache_file),
+                         os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, 'w') as f:
                 json.dump(cache, f)
-            
-            # Set restrictive permissions (only owner can read/write)
-            os.chmod(self.token_cache_file, 0o600)
-            
+            os.chmod(self.token_cache_file, 0o600)  # tighten if it pre-existed
+
             logger.debug("Saved token to cache")
             
         except Exception as e:
@@ -111,7 +113,7 @@ class ZaptecAPI:
             }
             
             logger.info("Authenticating with Zaptec API...")
-            response = self.session.post(url, data=data)
+            response = self.session.post(url, data=data, timeout=(5, 30))
             response.raise_for_status()
             
             token_data = response.json()
@@ -163,7 +165,9 @@ class ZaptecAPI:
         url = f"{self.base_url}{endpoint}"
         max_retries = 3
         retry_delay = 1  # seconds
-        
+        # Never block forever on a stalled connection (connect, read) seconds.
+        kwargs.setdefault("timeout", (5, 30))
+
         for attempt in range(max_retries):
             try:
                 response = self.session.request(method, url, **kwargs)
