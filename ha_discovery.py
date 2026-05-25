@@ -231,16 +231,16 @@ class HomeAssistantDiscovery:
             icon="mdi:battery-charging"
         )
         
-        # Sensor: Temperature
+        # Sensor: Humidity (StateId 270 = internal humidity)
         self._create_sensor(
             node_id=node_id,
-            object_id="temperature",
-            name="Temperature",
+            object_id="humidity",
+            name="Humidity",
             device_info=device_info,
             state_topic=state_topic,
-            value_template="{{ value_json.temperature }}",
-            unit_of_measurement="°C",
-            device_class="temperature",
+            value_template="{{ value_json.humidity }}",
+            unit_of_measurement="%",
+            device_class="humidity",
             state_class="measurement"
         )
         

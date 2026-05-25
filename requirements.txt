@@ -1,5 +1,5 @@
-paho-mqtt>=1.6.1
+# Pinned <2.0: the code uses paho's v1 callback API: on_connect(client, userdata, flags, rc).
+paho-mqtt>=1.6.1,<2.0
 requests>=2.31.0
 PyYAML>=6.0.1
 python-dotenv>=1.0.0
-schedule>=1.2.0
