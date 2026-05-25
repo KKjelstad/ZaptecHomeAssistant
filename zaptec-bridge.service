@@ -1,0 +1,15 @@
+[Unit]
+Description=Zaptec Home Assistant Bridge
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/kristian/workspace/ZaptecHomeAssistant
+Environment="ZAPTEC_PASSWORD=your-password-here"
+ExecStart=/usr/bin/python3 /home/kristian/workspace/ZaptecHomeAssistant/zaptec_bridge.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

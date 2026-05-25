@@ -1,0 +1,37 @@
+# Zaptec API Configuration
+zaptec:
+  username: "your-email@example.com"
+  # Password is optional here - you can provide it via:
+  # 1. Environment variable: export ZAPTEC_PASSWORD="your-password"
+  # 2. Interactive prompt when starting the service
+  # 3. Uncomment and set password here (less secure)
+  # password: "your-password"
+  api_base_url: "https://api.zaptec.com"
+
+# MQTT Configuration
+mqtt:
+  host: "homeassistant.local"  # Your Home Assistant IP or hostname
+  port: 1883
+  username: "mqtt-user"
+  password: "mqtt-password"
+  client_id: "zaptec-bridge"
+  
+# Bridge Configuration
+bridge:
+  # Dynamic polling intervals based on charger state
+  # Fast polling when actively charging for real-time power monitoring
+  poll_interval_charging: 10  # Seconds between updates when charging (recommended: 10-30)
+  # Slow polling when idle/disconnected to reduce API load
+  poll_interval_idle: 120     # Seconds between updates when idle (recommended: 120-300)
+  # Note: Zaptec API has a 10 requests/second rate limit per account
+  # With 1 charger: 10s charging + 120s idle = well within limits
+  # With multiple chargers, adjust accordingly (e.g., 20s charging, 180s idle for 3 chargers)
+  
+  discovery_prefix: "homeassistant"  # MQTT discovery prefix
+  state_topic_prefix: "zaptec"  # Prefix for state topics
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  
+# Optional: Specific charger IDs to monitor (leave empty to monitor all)
+chargers:
+  # - "ZAPTEC-CHARGER-ID-1"
+  # - "ZAPTEC-CHARGER-ID-2"
