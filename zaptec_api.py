@@ -136,16 +136,45 @@ class ZaptecAPI:
             logger.error(f"Authentication failed: {e}")
             return False
     
+    def _refresh_access_token(self) -> bool:
+        """Use the cached refresh token to get a new access token (no password)."""
+        if not self.refresh_token:
+            return False
+        try:
+            url = f"{self.base_url}/oauth/token"
+            data = {"grant_type": "refresh_token", "refresh_token": self.refresh_token}
+            logger.info("Refreshing Zaptec access token...")
+            response = self.session.post(url, data=data, timeout=(5, 30))
+            response.raise_for_status()
+
+            token_data = response.json()
+            self.access_token = token_data.get("access_token")
+            if token_data.get("refresh_token"):
+                self.refresh_token = token_data["refresh_token"]
+            expires_in = token_data.get("expires_in", 3600)
+            self.token_expiry = datetime.now() + timedelta(seconds=expires_in - 60)
+            self.session.headers.update({"Authorization": f"Bearer {self.access_token}"})
+            self._save_token_cache()
+            logger.info("Refreshed Zaptec access token")
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Token refresh failed, falling back to password grant: {e}")
+            return False
+
     def _ensure_authenticated(self) -> bool:
-        """Ensure we have a valid access token."""
-        if not self.access_token or not self.token_expiry:
-            return self.authenticate()
-        
-        if datetime.now() >= self.token_expiry:
-            logger.info("Token expired, re-authenticating...")
-            return self.authenticate()
-        
-        return True
+        """Ensure we have a valid access token.
+
+        On expiry, prefer the refresh-token grant (works without the password,
+        so a token-cache-only deployment keeps running), then fall back to the
+        password grant.
+        """
+        if self.access_token and self.token_expiry and datetime.now() < self.token_expiry:
+            return True
+
+        logger.info("Access token missing/expired; refreshing...")
+        if self._refresh_access_token():
+            return True
+        return self.authenticate()
     
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Optional[Dict]:
         """
@@ -197,7 +226,8 @@ class ZaptecAPI:
                     logger.error(f"API request failed: {method} {endpoint} - {e}")
                     if hasattr(e, 'response') and e.response is not None:
                         logger.error(f"Response status: {e.response.status_code}")
-                        logger.error(f"Response body: {e.response.text[:500]}")
+                        # Body may contain tokens/PII; keep it at DEBUG only.
+                        logger.debug(f"Response body: {e.response.text[:500]}")
                     return None
                     
             except requests.exceptions.RequestException as e:

@@ -45,6 +45,9 @@ class MQTTClient:
         
         self.connected = False
         self.message_callbacks: Dict[str, Callable] = {}
+        # Optional hook run after every successful (re)connect, so the bridge can
+        # re-publish discovery (retained discovery is lost if the broker restarts).
+        self.on_connect_callback: Optional[Callable] = None
         
     def _on_connect(self, client, userdata, flags, rc):
         """Callback when connected to MQTT broker."""
@@ -57,6 +60,11 @@ class MQTTClient:
             for topic in self.message_callbacks.keys():
                 self.client.subscribe(topic)
                 logger.debug(f"Subscribed to {topic}")
+            if self.on_connect_callback:
+                try:
+                    self.on_connect_callback()
+                except Exception as e:
+                    logger.error(f"on_connect callback failed: {e}")
         else:
             logger.error(f"Failed to connect to MQTT broker: {rc}")
             self.connected = False

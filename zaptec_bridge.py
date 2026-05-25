@@ -95,7 +95,11 @@ class ZaptecBridge:
             self.poll_interval_idle = old_interval
         
         self.current_poll_interval = self.poll_interval_idle  # Start with idle interval
-        
+
+        # Re-publish discovery on every (re)connect (retained configs are lost if
+        # the broker restarts or HA's MQTT integration reloads).
+        self.mqtt_client.on_connect_callback = self._republish_discovery
+
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -205,6 +209,18 @@ class ZaptecBridge:
                 return
             self.zaptec_api.set_charge_current(charger_id, round(current))
     
+    def _republish_discovery(self):
+        """Re-publish HA discovery for already-known chargers (called on reconnect).
+        No-op before the first discovery has populated self.chargers."""
+        if not self.chargers:
+            return
+        self.logger.info("Re-publishing Home Assistant discovery after (re)connect")
+        for charger in self.chargers.values():
+            try:
+                self.ha_discovery.create_charger_entities(charger)
+            except Exception as e:
+                self.logger.error(f"Failed to re-publish discovery: {e}")
+
     def _discover_chargers(self):
         """Discover all accessible chargers."""
         self.logger.info("Discovering Zaptec chargers...")
@@ -288,18 +304,22 @@ class ZaptecBridge:
         # We need to map these IDs to meaningful names
         state_map = {}
         
+        def _coerce_id(raw):
+            # Normalize StateId to int so lookups by int literal (513, 710, ...)
+            # match even if the API returns the id as a string.
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return None
+
+        items = []
         if isinstance(state_data, list):
-            # Direct list of state items
-            for item in state_data:
-                if isinstance(item, dict):
-                    state_id = item.get("StateId")
-                    value = item.get("ValueAsString") or item.get("Value")
-                    if state_id is not None:
-                        state_map[state_id] = value
+            items = state_data
         elif isinstance(state_data, dict) and "StateData" in state_data:
-            # Wrapped in StateData
-            for item in state_data.get("StateData", []):
-                state_id = item.get("StateId")
+            items = state_data.get("StateData", [])
+        for item in items:
+            if isinstance(item, dict):
+                state_id = _coerce_id(item.get("StateId"))
                 value = item.get("ValueAsString") or item.get("Value")
                 if state_id is not None:
                     state_map[state_id] = value
@@ -376,7 +396,7 @@ class ZaptecBridge:
             "total_charge_power_session": round(session_energy_kwh, 2),
             "completed_session_energy": round(session_energy_kwh, 2),  # Same as session energy
             "max_charge_current": charge_current_set,
-            "temperature": round(humidity, 1),  # Using humidity as temperature placeholder
+            "humidity": round(humidity, 1),  # StateId 270 is internal humidity (%)
             "is_charging": operating_mode == 3,  # Mode 3 = charging
             "is_connected": operating_mode in [2, 3, 5]  # Connected if mode 2, 3, or 5
         }
