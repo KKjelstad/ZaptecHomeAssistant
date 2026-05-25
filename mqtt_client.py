@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 class MQTTClient:
     """MQTT client for Home Assistant integration."""
     
-    def __init__(self, host: str, port: int, username: str, password: str, 
-                 client_id: str = "zaptec-bridge"):
+    def __init__(self, host: str, port: int, username: str, password: str,
+                 client_id: str = "zaptec-bridge", availability_topic: Optional[str] = None):
         """
         Initialize MQTT client.
         
@@ -31,9 +31,14 @@ class MQTTClient:
         self.username = username
         self.password = password
         self.client_id = client_id
-        
+        self.availability_topic = availability_topic
+
         self.client = mqtt.Client(client_id=client_id)
         self.client.username_pw_set(username, password)
+        # Last Will: broker marks us offline if the connection drops, so HA
+        # shows entities "unavailable" instead of stale retained values.
+        if self.availability_topic:
+            self.client.will_set(self.availability_topic, "offline", qos=1, retain=True)
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
         self.client.on_message = self._on_message
@@ -46,7 +51,9 @@ class MQTTClient:
         if rc == 0:
             logger.info("Connected to MQTT broker")
             self.connected = True
-            # Resubscribe to all topics on reconnect
+            # Announce online (retained), then resubscribe (also covers reconnects).
+            if self.availability_topic:
+                self.client.publish(self.availability_topic, "online", qos=1, retain=True)
             for topic in self.message_callbacks.keys():
                 self.client.subscribe(topic)
                 logger.debug(f"Subscribed to {topic}")
@@ -91,6 +98,14 @@ class MQTTClient:
     def disconnect(self):
         """Disconnect from MQTT broker."""
         logger.info("Disconnecting from MQTT broker...")
+        # Publish offline before a graceful disconnect (the LWT only fires on an
+        # ungraceful drop).
+        if self.availability_topic and self.connected:
+            try:
+                msg = self.client.publish(self.availability_topic, "offline", qos=1, retain=True)
+                msg.wait_for_publish()
+            except Exception:
+                pass
         self.client.loop_stop()
         self.client.disconnect()
     
