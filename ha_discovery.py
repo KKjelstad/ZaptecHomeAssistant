@@ -91,11 +91,12 @@ class HomeAssistantDiscovery:
         
         # DeviceType is a number, map it to actual model names
         device_type_id = charger_data.get("DeviceType", 0)
+        # 4 = Go is confirmed (a type-4 charger reports "ZAPTEC GO" in its OCMF
+        # meter data); 1/2 follow Zaptec's DeviceType enum (Pro, Home/Smart).
         device_type_map = {
-            1: "Zaptec Go",
-            2: "Zaptec Pro",
-            3: "Zaptec Home",
-            4: "Zaptec Pro+",
+            1: "Zaptec Pro",
+            2: "Zaptec Home",
+            4: "Zaptec Go",
         }
         model = device_type_map.get(device_type_id, f"Zaptec Charger (Type {device_type_id})")
         
@@ -251,7 +252,7 @@ class HomeAssistantDiscovery:
             name="Charging",
             device_info=device_info,
             state_topic=state_topic,
-            value_template="{{ value_json.is_charging }}",
+            value_template="{{ 'true' if value_json.is_charging else 'false' }}",
             device_class="battery_charging"
         )
         
@@ -262,7 +263,7 @@ class HomeAssistantDiscovery:
             name="Connected",
             device_info=device_info,
             state_topic=state_topic,
-            value_template="{{ value_json.is_connected }}",
+            value_template="{{ 'true' if value_json.is_connected else 'false' }}",
             device_class="connectivity"
         )
         
@@ -275,7 +276,7 @@ class HomeAssistantDiscovery:
             device_info=device_info,
             state_topic=state_topic,
             command_topic=command_topic,
-            value_template="{{ value_json.is_charging }}",
+            value_template="{{ 'true' if value_json.is_charging else 'false' }}",
             icon="mdi:ev-station"
         )
         
@@ -333,6 +334,8 @@ class HomeAssistantDiscovery:
             "unique_id": f"{node_id}_{object_id}",
             "state_topic": state_topic,
             "value_template": value_template,
+            # Templates must render lowercase 'true'/'false': a bare
+            # {{ value_json.flag }} renders Python "True"/"False" and never matches.
             "payload_on": "true",
             "payload_off": "false",
             "device": device_info
