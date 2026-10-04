@@ -5,10 +5,15 @@ Handles MQTT connection, discovery, and message publishing.
 
 import json
 import logging
+import threading
 from typing import Dict, Callable, Optional
 import paho.mqtt.client as mqtt
 
 logger = logging.getLogger(__name__)
+
+# Max seconds publish() waits for a QoS 1 ack. Never wait forever: if the
+# connection drops mid-publish the ack may never arrive.
+PUBLISH_TIMEOUT = 5.0
 
 
 class MQTTClient:
@@ -111,7 +116,7 @@ class MQTTClient:
         if self.availability_topic and self.connected:
             try:
                 msg = self.client.publish(self.availability_topic, "offline", qos=1, retain=True)
-                msg.wait_for_publish()
+                msg.wait_for_publish(timeout=PUBLISH_TIMEOUT)
             except Exception:
                 pass
         self.client.loop_stop()
@@ -135,12 +140,24 @@ class MQTTClient:
         
         try:
             result = self.client.publish(topic, payload, qos=1, retain=retain)
-            result.wait_for_publish()
-            return result.is_published()
+            if self._in_network_thread():
+                # Callbacks (on_connect -> discovery re-publish, on_message) run on
+                # paho's network thread, which is the thread that processes the
+                # PUBACK. Waiting here would deadlock it, so just queue the message.
+                return result.rc == mqtt.MQTT_ERR_SUCCESS
+            result.wait_for_publish(timeout=PUBLISH_TIMEOUT)
+            if not result.is_published():
+                logger.warning(f"Publish to {topic} not acknowledged within {PUBLISH_TIMEOUT}s")
+                return False
+            return True
         except Exception as e:
             logger.error(f"Failed to publish to {topic}: {e}")
             return False
     
+    def _in_network_thread(self) -> bool:
+        """True when called from paho's loop_start() network thread."""
+        return threading.current_thread() is getattr(self.client, "_thread", None)
+
     def subscribe(self, topic: str, callback: Callable):
         """
         Subscribe to a topic and register callback.

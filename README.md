@@ -102,6 +102,8 @@ zaptec:
 The shipped unit runs as a dedicated `zaptec` user from `/opt/zaptec-bridge`,
 with the Zaptec password in a `0600` EnvironmentFile (not in the unit / `ps`).
 MQTT credentials stay in `config.yaml` (keep it `0600`).
+It uses `Type=notify` with a systemd watchdog (`WatchdogSec=300`): if the
+polling loop ever stops pinging, systemd kills and restarts the bridge.
 
 1. Install the code + venv into `/opt/zaptec-bridge` and create the `zaptec` user.
 2. Put `config.yaml` (MQTT creds) in `/opt/zaptec-bridge/` (chmod 600, owned by `zaptec`).
