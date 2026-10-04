@@ -7,6 +7,7 @@ Main application that connects Zaptec chargers to Home Assistant via MQTT.
 import logging
 import math
 import signal
+import socket
 import sys
 import threading
 import time
@@ -19,6 +20,26 @@ from typing import Dict, Optional
 from zaptec_api import ZaptecAPI
 from mqtt_client import MQTTClient
 from ha_discovery import HomeAssistantDiscovery
+
+# How often the main loop pings the systemd watchdog while idle-waiting.
+# Must be well below WatchdogSec in zaptec-bridge.service.
+WATCHDOG_PING_INTERVAL = 30
+
+
+def _sd_notify(message: str):
+    """Send an sd_notify(3) message to systemd. No-op when not run under
+    Type=notify (NOTIFY_SOCKET unset), e.g. in Docker or from a shell."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    if addr.startswith("@"):  # abstract namespace socket
+        addr = "\0" + addr[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(addr)
+            sock.sendall(message.encode())
+    except OSError as e:
+        logging.getLogger(__name__).debug(f"sd_notify failed: {e}")
 
 
 class ZaptecBridge:
@@ -503,12 +524,22 @@ class ZaptecBridge:
         self.logger.info(f"Bridge started with dynamic polling:")
         self.logger.info(f"  - Charging mode: {self.poll_interval_charging}s interval")
         self.logger.info(f"  - Idle mode: {self.poll_interval_idle}s interval")
+        _sd_notify("READY=1")
 
         try:
             while self.running:
                 self._poll_chargers()
-                # Interruptible wait so SIGTERM is acted on immediately.
-                self._wake.wait(self.current_poll_interval)
+                # Pinged only from the main loop: if a poll or publish ever hangs,
+                # the pings stop and systemd restarts the service (WatchdogSec).
+                _sd_notify("WATCHDOG=1")
+                # Interruptible wait so SIGTERM is acted on immediately; woken
+                # periodically to keep pinging the watchdog during long idle waits.
+                deadline = time.monotonic() + self.current_poll_interval
+                while self.running:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or self._wake.wait(min(remaining, WATCHDOG_PING_INTERVAL)):
+                        break
+                    _sd_notify("WATCHDOG=1")
         except Exception as e:
             self.logger.error(f"Error in main loop: {e}", exc_info=True)
         finally:

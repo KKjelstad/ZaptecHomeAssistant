@@ -4,7 +4,13 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+# notify: the bridge sends READY=1 once started and pings WATCHDOG=1 from its
+# main loop. If the loop hangs (e.g. a stuck publish), systemd kills and
+# restarts it after WatchdogSec. A poll can legitimately take ~2 min in the
+# worst case (3 retries x 35s timeouts + backoff), so keep this well above that.
+Type=notify
+NotifyAccess=main
+WatchdogSec=300
 User=zaptec
 Group=zaptec
 WorkingDirectory=/opt/zaptec-bridge
